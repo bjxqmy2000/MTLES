@@ -1,0 +1,13 @@
+transformers==4.26.1
+scipy~=1.14.1
+datasets
+pandas~=2.2.3
+scikit-learn~=1.6.0
+prettytable
+gradio
+torch~=2.5.1
+setuptools
+h5py
+numpy~=2.0.1
+matplotlib~=3.10.3
+seaborn~=0.13.2
