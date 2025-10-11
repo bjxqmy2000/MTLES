@@ -22,6 +22,605 @@ logger = logging.getLogger(__name__)
 
 
 # QoS数据集类，用于加载和处理数据
+class QoSDataset:
+    def __init__(self, density, userlist_path, wslist_path, data_dir):
+        # 记录用户有效特征的编码数量
+        self.user_id_num = 0
+        self.user_ip_address_num = 0
+        self.user_country_num = 0
+        self.user_ip_number_num = 0
+        self.user_as_num = 0
+        self.user_latitude_num = 0
+        self.user_longitude_num = 0
+
+        # 记录服务有效特征的编码数量
+        self.ws_id_num = 0
+        self.ws_wsdl_address_num = 0
+        self.ws_provider_num = 0
+        self.ws_ip_address_num = 0
+        self.ws_country_num = 0
+        self.ws_ip_number_num = 0
+        self.ws_as_num = 0
+        self.ws_latitude_num = 0
+        self.ws_longitude_num = 0
+
+        # 文件路径
+        self.userlist_path = userlist_path
+        self.wslist_path = wslist_path
+        self.data_dir = data_dir
+
+        # 设置RT和TP矩阵路径
+        rtMatrix_train_path = os.path.join(data_dir, f"sparse/rtMatrix{density}.csv")
+        rtMatrix_test_path = os.path.join(data_dir, f"sparse/rtMatrix{100 - density}.csv")
+        tpMatrix_train_path = os.path.join(data_dir, f"sparse/tpMatrix{density}.csv")
+        tpMatrix_test_path = os.path.join(data_dir, f"sparse/tpMatrix{100 - density}.csv")
+
+        # 读取用户和服务特征
+        userlist_df = pd.read_csv(userlist_path)
+        wslist_df = pd.read_csv(wslist_path)
+
+        # 读取训练和测试矩阵
+        rtMatrix_train_df = pd.read_csv(rtMatrix_train_path, header=None)
+        rtMatrix_test_df = pd.read_csv(rtMatrix_test_path, header=None)
+        tpMatrix_train_df = pd.read_csv(tpMatrix_train_path, header=None)
+        tpMatrix_test_df = pd.read_csv(tpMatrix_test_path, header=None)
+
+        logger.info("文件预读取完毕")
+
+        # 获取用户和服务信息
+        self.user_info = self.get_user_info(userlist_df)
+        self.ws_info = self.get_ws_info(wslist_df)
+
+        # 获取矩阵数据
+        self.train_rt_info = self.get_rt_info(rtMatrix_train_df)
+        self.test_rt_info = self.get_rt_info(rtMatrix_test_df)
+        self.train_tp_info = self.get_tp_info(tpMatrix_train_df)
+        self.test_tp_info = self.get_tp_info(tpMatrix_test_df)
+
+    def get_user_info(self, userlist_df):
+        """获取并编码用户特征"""
+        # 将user_id转为int类型
+        userlist_df["user_id"] = userlist_df["user_id"].astype(int)
+
+        # 使用LabelEncoder对分类特征进行编码
+        other_features = ["ip_address", "country", "ip_number", "as", "latitude", "longitude"]
+        for feat in other_features:
+            lbe = LabelEncoder()
+            userlist_df[feat] = lbe.fit_transform(userlist_df[feat])
+
+        # 获取各特征的最大编码值+1（即特征的类别数量）
+        max_values = userlist_df[["user_id", "ip_address", "country", "ip_number", "as", "latitude", "longitude"]].max()
+        self.user_id_num = max_values["user_id"] + 1
+        self.user_ip_address_num = max_values["ip_address"] + 1
+        self.user_country_num = max_values["country"] + 1
+        self.user_ip_number_num = max_values["ip_number"] + 1
+        self.user_as_num = max_values["as"] + 1
+        self.user_latitude_num = max_values["latitude"] + 1
+        self.user_longitude_num = max_values["longitude"] + 1
+
+        # 构建用户信息字典
+        user_info = {
+            row["user_id"]: {
+                'user_id': row["user_id"],
+                'ip_address': row["ip_address"],
+                'country': row["country"],
+                'ip_number': row["ip_number"],
+                'as': row["as"],
+                'latitude': row["latitude"],
+                'longitude': row["longitude"]
+            }
+            for _, row in userlist_df.iterrows()
+        }
+
+        logger.info("user_info获取完毕")
+        return user_info
+
+    def get_ws_info(self, wslist_df):
+        """获取并编码Web服务特征"""
+        # 将ws_id转为int类型
+        wslist_df["ws_id"] = wslist_df["ws_id"].astype(int)
+
+        # 使用LabelEncoder对分类特征进行编码
+        other_features = ["wsdl_address", "provider", "ip_address", "country", "ip_number", "as", "latitude",
+                          "longitude"]
+        for feat in other_features:
+            lbe = LabelEncoder()
+            wslist_df[feat] = lbe.fit_transform(wslist_df[feat])
+
+        # 获取各特征的最大编码值+1（即特征的类别数量）
+        max_values = wslist_df[
+            ["ws_id", "wsdl_address", "provider", "ip_address", "country", "ip_number", "as", "latitude",
+             "longitude"]].max()
+        self.ws_id_num = max_values["ws_id"] + 1
+        self.ws_wsdl_address_num = max_values["wsdl_address"] + 1
+        self.ws_provider_num = max_values["provider"] + 1
+        self.ws_ip_address_num = max_values["ip_address"] + 1
+        self.ws_country_num = max_values["country"] + 1
+        self.ws_ip_number_num = max_values["ip_number"] + 1
+        self.ws_as_num = max_values["as"] + 1
+        self.ws_latitude_num = max_values["latitude"] + 1
+        self.ws_longitude_num = max_values["longitude"] + 1
+
+        # 构建服务信息字典
+        ws_info = {
+            row["ws_id"]: {
+                'ws_id': row["ws_id"],
+                'wsdl_address': row["wsdl_address"],
+                'provider': row["provider"],
+                'ip_address': row["ip_address"],
+                'country': row["country"],
+                'ip_number': row["ip_number"],
+                'as': row["as"],
+                'latitude': row["latitude"],
+                'longitude': row["longitude"]
+            }
+            for _, row in wslist_df.iterrows()
+        }
+
+        logger.info("ws_info获取完毕")
+        return ws_info
+
+    def get_rt_info(self, rtMatrix_df):
+        """处理响应时间矩阵"""
+        # 转换为numpy数组
+        rtMatrix_array = rtMatrix_df.values
+
+        # 获取非零元素的索引和值
+        rows, cols = np.where(rtMatrix_array != 0)
+        rts = rtMatrix_array[rows, cols]
+
+        # 构建响应时间字典
+        rt_info = {}
+        for i, j, rt in zip(rows, cols, rts):
+            if i not in rt_info:
+                rt_info[i] = {}
+            rt_info[i][j] = float(rt)
+
+        logger.info("rt_info获取完毕，非零元素数量：{}".format(len(rts)))
+        return rt_info
+
+    def get_tp_info(self, tpMatrix_df):
+        """处理吞吐量矩阵"""
+        # 转换为numpy数组
+        tpMatrix_array = tpMatrix_df.values
+
+        # 获取非零元素的索引和值
+        rows, cols = np.where(tpMatrix_array != 0)
+        tps = tpMatrix_array[rows, cols]
+
+        # 构建吞吐量字典
+        tp_info = {}
+        for i, j, tp in zip(rows, cols, tps):
+            if i not in tp_info:
+                tp_info[i] = {}
+            tp_info[i][j] = float(tp)
+
+        logger.info("tp_info获取完毕，非零元素数量：{}".format(len(tps)))
+        return tp_info
+
+    def build_multi_task_dataset(self, use_single_attribute_samples=True):
+        """构建多任务数据集并计算归一化参数"""
+        # 构建训练数据集并计算归一化参数
+        self.train_dataset, self.rt_mean, self.rt_std, self.tp_mean, self.tp_std = self.get_multi_dataset(
+            user_info=self.user_info,
+            ws_info=self.ws_info,
+            rt_info=self.train_rt_info,
+            tp_info=self.train_tp_info,
+            compute_stats=True,
+            use_single_attribute_samples=use_single_attribute_samples
+        )
+
+        # 构建测试数据集，使用训练集的归一化参数
+        self.valid_dataset = self.get_multi_dataset(
+            user_info=self.user_info,
+            ws_info=self.ws_info,
+            rt_info=self.test_rt_info,
+            tp_info=self.test_tp_info,
+            compute_stats=False,
+            rt_mean=self.rt_mean,
+            rt_std=self.rt_std,
+            tp_mean=self.tp_mean,
+            tp_std=self.tp_std,
+            use_single_attribute_samples=use_single_attribute_samples
+        )
+
+        # 统计单/双属性样本数量
+        train_both_count = sum(1 for item in self.train_dataset if item['has_rt'] and item['has_tp'])
+        train_rt_only_count = sum(1 for item in self.train_dataset if item['has_rt'] and not item['has_tp'])
+        train_tp_only_count = sum(1 for item in self.train_dataset if not item['has_rt'] and item['has_tp'])
+
+        valid_both_count = sum(1 for item in self.valid_dataset if item['has_rt'] and item['has_tp'])
+        valid_rt_only_count = sum(1 for item in self.valid_dataset if item['has_rt'] and not item['has_tp'])
+        valid_tp_only_count = sum(1 for item in self.valid_dataset if not item['has_rt'] and item['has_tp'])
+
+        print(f"Multi-task dataset statistics:")
+        print(f"Train dataset size: {len(self.train_dataset)}")
+        print(f"  - 同时有RT和TP的样本数: {train_both_count}")
+        print(f"  - 只有RT的样本数: {train_rt_only_count}")
+        print(f"  - 只有TP的样本数: {train_tp_only_count}")
+        print(f"Valid dataset size: {len(self.valid_dataset)}")
+        print(f"  - 同时有RT和TP的样本数: {valid_both_count}")
+        print(f"  - 只有RT的样本数: {valid_rt_only_count}")
+        print(f"  - 只有TP的样本数: {valid_tp_only_count}")
+
+    def build_rt_task_dataset(self):
+        """构建RT单任务数据集并计算归一化参数"""
+        # 构建训练数据集并计算归一化参数
+        self.train_dataset, self.rt_mean, self.rt_std = self.get_rt_dataset(
+            user_info=self.user_info,
+            ws_info=self.ws_info,
+            rt_info=self.train_rt_info,
+            compute_stats=True
+        )
+
+        # 构建测试数据集，使用训练集的归一化参数
+        self.valid_dataset = self.get_rt_dataset(
+            user_info=self.user_info,
+            ws_info=self.ws_info,
+            rt_info=self.test_rt_info,
+            compute_stats=False,
+            rt_mean=self.rt_mean,
+            rt_std=self.rt_std
+        )
+
+        print(f"RT-only task dataset statistics:")
+        print(f"train dataset size: {len(self.train_dataset)}")
+        print(f"valid dataset size: {len(self.valid_dataset)}")
+
+    def build_tp_task_dataset(self):
+        """构建TP单任务数据集并计算归一化参数"""
+        # 构建训练数据集并计算归一化参数
+        self.train_dataset, self.tp_mean, self.tp_std = self.get_tp_dataset(
+            user_info=self.user_info,
+            ws_info=self.ws_info,
+            tp_info=self.train_tp_info,
+            compute_stats=True
+        )
+
+        # 构建测试数据集，使用训练集的归一化参数
+        self.valid_dataset = self.get_tp_dataset(
+            user_info=self.user_info,
+            ws_info=self.ws_info,
+            tp_info=self.test_tp_info,
+            compute_stats=False,
+            tp_mean=self.tp_mean,
+            tp_std=self.tp_std
+        )
+
+        print(f"TP-only task dataset statistics:")
+        print(f"train dataset size: {len(self.train_dataset)}")
+        print(f"valid dataset size: {len(self.valid_dataset)}")
+
+    def get_multi_dataset(self, user_info, ws_info, rt_info, tp_info, compute_stats=True,
+                          rt_mean=None, rt_std=None, tp_mean=None, tp_std=None,
+                          use_single_attribute_samples=True):
+        """构建多任务数据集并进行归一化处理"""
+        # 如果需要计算统计量
+        if compute_stats:
+            all_rts = []
+            all_tps = []
+            # 收集所有有效的RT和TP值
+            for user_id in rt_info.keys():
+                for ws_id in rt_info[user_id].keys():
+                    all_rts.append(rt_info[user_id][ws_id])
+
+            for user_id in tp_info.keys():
+                for ws_id in tp_info[user_id].keys():
+                    all_tps.append(tp_info[user_id][ws_id])
+
+            # 计算均值和标准差用于归一化
+            rt_mean, rt_std = np.mean(all_rts), np.std(all_rts)
+            tp_mean, tp_std = np.mean(all_tps), np.std(all_tps)
+
+            logger.info(f"RT归一化参数 - 均值: {rt_mean:.4f}, 标准差: {rt_std:.4f}")
+            logger.info(f"TP归一化参数 - 均值: {tp_mean:.4f}, 标准差: {tp_std:.4f}")
+
+        # 构建数据集
+        dataset = []
+
+        if use_single_attribute_samples:
+            # 处理所有用户 - 包括单属性样本
+            all_user_ids = set(list(rt_info.keys()) + list(tp_info.keys()))
+
+            for user_id in all_user_ids:
+                # 获取该用户的RT和TP数据，可能不存在
+                user_rts = rt_info.get(user_id, {})
+                user_tps = tp_info.get(user_id, {})
+
+                # 获取该用户所有的服务ID
+                all_ws_ids = set(list(user_rts.keys()) + list(user_tps.keys()))
+
+                for ws_id in all_ws_ids:
+                    # 检查RT和TP是否存在
+                    has_rt = ws_id in user_rts
+                    has_tp = ws_id in user_tps
+
+                    # 准备数据项
+                    item = {
+                        'user_info': user_info[user_id],
+                        'ws_info': ws_info[ws_id],
+                        'has_rt': has_rt,
+                        'has_tp': has_tp
+                    }
+
+                    # 处理RT
+                    if has_rt:
+                        rt_raw = user_rts[ws_id]
+                        normalized_rt = (rt_raw - rt_mean) / (rt_std + 1e-8)
+                        item['rt'] = normalized_rt
+                        item['rt_raw'] = rt_raw
+                    else:
+                        # 使用占位值，训练时会忽略
+                        item['rt'] = 0.0
+                        item['rt_raw'] = 0.0
+
+                    # 处理TP
+                    if has_tp:
+                        tp_raw = user_tps[ws_id]
+                        normalized_tp = (tp_raw - tp_mean) / (tp_std + 1e-8)
+                        item['tp'] = normalized_tp
+                        item['tp_raw'] = tp_raw
+                    else:
+                        # 使用占位值，训练时会忽略
+                        item['tp'] = 0.0
+                        item['tp_raw'] = 0.0
+
+                    # 只有当至少有一个指标存在时才添加到数据集
+                    if has_rt or has_tp:
+                        dataset.append(item)
+        else:
+            # 只处理同时有RT和TP的样本 - 排除单属性样本
+            for user_id in rt_info.keys():
+                if user_id in tp_info:
+                    user_rts = rt_info[user_id]
+                    user_tps = tp_info[user_id]
+
+                    # 找到同时有RT和TP的服务
+                    common_ws_ids = set(user_rts.keys()) & set(user_tps.keys())
+
+                    for ws_id in common_ws_ids:
+                        rt_raw = user_rts[ws_id]
+                        tp_raw = user_tps[ws_id]
+
+                        normalized_rt = (rt_raw - rt_mean) / (rt_std + 1e-8)
+                        normalized_tp = (tp_raw - tp_mean) / (tp_std + 1e-8)
+
+                        item = {
+                            'user_info': user_info[user_id],
+                            'ws_info': ws_info[ws_id],
+                            'has_rt': True,
+                            'has_tp': True,
+                            'rt': normalized_rt,
+                            'rt_raw': rt_raw,
+                            'tp': normalized_tp,
+                            'tp_raw': tp_raw
+                        }
+
+                        dataset.append(item)
+
+        if compute_stats:
+            return dataset, rt_mean, rt_std, tp_mean, tp_std
+        else:
+            return dataset
+
+    def get_rt_dataset(self, user_info, ws_info, rt_info, compute_stats=True,
+                       rt_mean=None, rt_std=None):
+        """构建RT单任务数据集并进行归一化处理"""
+        # 如果需要计算统计量
+        if compute_stats:
+            all_rts = []
+            # 收集所有有效的RT值
+            for user_id in rt_info.keys():
+                for ws_id in rt_info[user_id].keys():
+                    all_rts.append(rt_info[user_id][ws_id])
+
+            # 计算均值和标准差用于归一化
+            rt_mean, rt_std = np.mean(all_rts), np.std(all_rts)
+            logger.info(f"RT归一化参数 - 均值: {rt_mean:.4f}, 标准差: {rt_std:.4f}")
+
+        # 构建数据集
+        dataset = []
+        # 处理所有用户
+        for user_id in rt_info.keys():
+            # 获取该用户的RT数据
+            user_rts = rt_info[user_id]
+
+            for ws_id in user_rts.keys():
+                # 准备数据项
+                item = {
+                    'user_info': user_info[user_id],
+                    'ws_info': ws_info[ws_id]
+                }
+
+                # 处理RT
+                rt_raw = user_rts[ws_id]
+                normalized_rt = (rt_raw - rt_mean) / (rt_std + 1e-8)
+                item['rt'] = normalized_rt
+                item['rt_raw'] = rt_raw
+
+                # 添加到数据集
+                dataset.append(item)
+
+        if compute_stats:
+            return dataset, rt_mean, rt_std
+        else:
+            return dataset
+
+    def get_tp_dataset(self, user_info, ws_info, tp_info, compute_stats=True,
+                       tp_mean=None, tp_std=None):
+        """构建TP单任务数据集并进行归一化处理"""
+        # 如果需要计算统计量
+        if compute_stats:
+            all_tps = []
+            # 收集所有有效的TP值
+            for user_id in tp_info.keys():
+                for ws_id in tp_info[user_id].keys():
+                    all_tps.append(tp_info[user_id][ws_id])
+
+            # 计算均值和标准差用于归一化
+            tp_mean, tp_std = np.mean(all_tps), np.std(all_tps)
+            logger.info(f"TP归一化参数 - 均值: {tp_mean:.4f}, 标准差: {tp_std:.4f}")
+
+        # 构建数据集
+        dataset = []
+        # 处理所有用户
+        for user_id in tp_info.keys():
+            # 获取该用户的TP数据
+            user_tps = tp_info[user_id]
+
+            for ws_id in user_tps.keys():
+                # 准备数据项
+                item = {
+                    'user_info': user_info[user_id],
+                    'ws_info': ws_info[ws_id]
+                }
+
+                # 处理TP
+                tp_raw = user_tps[ws_id]
+                normalized_tp = (tp_raw - tp_mean) / (tp_std + 1e-8)
+                item['tp'] = normalized_tp
+                item['tp_raw'] = tp_raw
+
+                # 添加到数据集
+                dataset.append(item)
+
+        if compute_stats:
+            return dataset, tp_mean, tp_std
+        else:
+            return dataset
+
+class QoSMultiTorchDataset(Dataset):
+    """多任务PyTorch数据集类，用于加载QoS数据，同时包含RT和TP任务"""
+
+    def __init__(self, dataset, user_info_dim, ws_info_dim):
+        self.dataset = dataset
+        self.user_info_dim = user_info_dim
+        self.ws_info_dim = ws_info_dim
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+
+        # 将用户信息转换为张量
+        user_info = torch.zeros(self.user_info_dim)
+        user_info[0] = item['user_info']['user_id']
+        user_info[1] = item['user_info']['ip_address']
+        user_info[2] = item['user_info']['country']
+        user_info[3] = item['user_info']['ip_number']
+        user_info[4] = item['user_info']['as']
+        user_info[5] = item['user_info']['latitude']
+        user_info[6] = item['user_info']['longitude']
+
+        # 将服务信息转换为张量
+        ws_info = torch.zeros(self.ws_info_dim)
+        ws_info[0] = item['ws_info']['ws_id']
+        ws_info[1] = item['ws_info']['wsdl_address']
+        ws_info[2] = item['ws_info']['provider']
+        ws_info[3] = item['ws_info']['ip_address']
+        ws_info[4] = item['ws_info']['country']
+        ws_info[5] = item['ws_info']['ip_number']
+        ws_info[6] = item['ws_info']['as']
+        ws_info[7] = item['ws_info']['latitude']
+        ws_info[8] = item['ws_info']['longitude']
+
+        return {
+            'user_info': user_info,
+            'ws_info': ws_info,
+            'rt': torch.tensor(item['rt'], dtype=torch.float),
+            'tp': torch.tensor(item['tp'], dtype=torch.float),
+            'rt_raw': torch.tensor(item['rt_raw'], dtype=torch.float),
+            'tp_raw': torch.tensor(item['tp_raw'], dtype=torch.float),
+            'has_rt': torch.tensor(item['has_rt'], dtype=torch.bool),
+            'has_tp': torch.tensor(item['has_tp'], dtype=torch.bool)
+        }
+
+class QoSRtTorchDataset(Dataset):
+    """RT单任务PyTorch数据集类，用于加载QoS响应时间数据"""
+
+    def __init__(self, dataset, user_info_dim, ws_info_dim):
+        self.dataset = dataset
+        self.user_info_dim = user_info_dim
+        self.ws_info_dim = ws_info_dim
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+
+        # 将用户信息转换为张量
+        user_info = torch.zeros(self.user_info_dim)
+        user_info[0] = item['user_info']['user_id']
+        user_info[1] = item['user_info']['ip_address']
+        user_info[2] = item['user_info']['country']
+        user_info[3] = item['user_info']['ip_number']
+        user_info[4] = item['user_info']['as']
+        user_info[5] = item['user_info']['latitude']
+        user_info[6] = item['user_info']['longitude']
+
+        # 将服务信息转换为张量
+        ws_info = torch.zeros(self.ws_info_dim)
+        ws_info[0] = item['ws_info']['ws_id']
+        ws_info[1] = item['ws_info']['wsdl_address']
+        ws_info[2] = item['ws_info']['provider']
+        ws_info[3] = item['ws_info']['ip_address']
+        ws_info[4] = item['ws_info']['country']
+        ws_info[5] = item['ws_info']['ip_number']
+        ws_info[6] = item['ws_info']['as']
+        ws_info[7] = item['ws_info']['latitude']
+        ws_info[8] = item['ws_info']['longitude']
+
+        return {
+            'user_info': user_info,
+            'ws_info': ws_info,
+            'rt': torch.tensor(item['rt'], dtype=torch.float),
+            'rt_raw': torch.tensor(item['rt_raw'], dtype=torch.float)
+        }
+
+class QoSTpTorchDataset(Dataset):
+    """TP单任务PyTorch数据集类，用于加载QoS吞吐量数据"""
+
+    def __init__(self, dataset, user_info_dim, ws_info_dim):
+        self.dataset = dataset
+        self.user_info_dim = user_info_dim
+        self.ws_info_dim = ws_info_dim
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+
+        # 将用户信息转换为张量
+        user_info = torch.zeros(self.user_info_dim)
+        user_info[0] = item['user_info']['user_id']
+        user_info[1] = item['user_info']['ip_address']
+        user_info[2] = item['user_info']['country']
+        user_info[3] = item['user_info']['ip_number']
+        user_info[4] = item['user_info']['as']
+        user_info[5] = item['user_info']['latitude']
+        user_info[6] = item['user_info']['longitude']
+
+        # 将服务信息转换为张量
+        ws_info = torch.zeros(self.ws_info_dim)
+        ws_info[0] = item['ws_info']['ws_id']
+        ws_info[1] = item['ws_info']['wsdl_address']
+        ws_info[2] = item['ws_info']['provider']
+        ws_info[3] = item['ws_info']['ip_address']
+        ws_info[4] = item['ws_info']['country']
+        ws_info[5] = item['ws_info']['ip_number']
+        ws_info[6] = item['ws_info']['as']
+        ws_info[7] = item['ws_info']['latitude']
+        ws_info[8] = item['ws_info']['longitude']
+
+        return {
+            'user_info': user_info,
+            'ws_info': ws_info,
+            'tp': torch.tensor(item['tp'], dtype=torch.float),
+            'tp_raw': torch.tensor(item['tp_raw'], dtype=torch.float)
+        }
 
 
 class MultiTaskEmbedding(nn.Module):
